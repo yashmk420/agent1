@@ -5,7 +5,7 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from github_files import list_files, read_file
+from github_files import list_files, read_file, write_file
 
 load_dotenv()
 
@@ -66,12 +66,45 @@ tools = [
             },
             "strict": True
         }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": (
+            "Propose new content for a file in the GitHub repository. "
+            "The user must approve the diff before any changes are applied."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/repo format."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Path of the file to update."
+                },
+                "new_content": {
+                    "type": "string",
+                    "description": "The complete proposed content of the file."
+                }
+            },
+            "required": ["repo", "path", "new_content"],
+            "additionalProperties": False
+        },
+        "strict": True
     }
+} 
+
+
 ]
 
 available_functions = {
     "list_files": list_files,
-    "read_file": read_file
+    "read_file": read_file,
+    "write_file": write_file
 }
 
 
@@ -146,4 +179,11 @@ def ask_agent(question):
 
 
 if __name__ == "__main__":
-    ask_agent("What does this repository do?")
+
+    try: 
+     ask_agent("Add a new line at the end of README.md saying "
+    "'This project was inspected by my AI agent.' "
+    "Preserve all existing README content. "
+    "Use the write_file tool to propose the change.")
+    except Exception as error:
+        print(f"Agent failed due to {error}")
