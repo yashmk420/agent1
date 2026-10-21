@@ -122,18 +122,86 @@ def get_file_data(repo, path):
 
     return content, sha
 
-def apply_change(repo, path, new_content, sha):
-    # Build the GitHub API URL for this file.
+##CREATE BRANCH
+
+def create_branch(repo, new_branch, from_branch="main"):
+    token = os.getenv("GITHUB_TOKEN")
+
+    headers = {
+    "Authorization": f"Bearer {token}",
+    "Accept": "application/vnd.github+json"
+    }
+ 
+    base_url = f"https://api.github.com/repos/{repo}/git/ref/heads/{from_branch}"
+
+    response = requests.get(base_url, headers=headers)
+
+
+    if response.status_code != 200:
+
+     raise RuntimeError(
+        f"Could not find base branch: {response.status_code} {response.text}"
+    )
+
+    base_sha = response.json()["object"]["sha"]
+
+    create_url = f"https://api.github.com/repos/{repo}/git/refs"
+
+    payload = {
+    "ref": f"refs/heads/{new_branch}",
+    "sha": base_sha
+    }
+    
+    response = requests.post(create_url, headers=headers, json=payload)
+
+    if response.status_code == 422:
+     error_data = response.json()
+
+     if error_data.get("message") == "Reference already exists":
+        return {
+            "already_exists": True,
+            "ref": f"refs/heads/{new_branch}"
+        }
+
+     raise RuntimeError(
+        f"Branch creation rejected by GitHub: {response.text}"
+    )
+     
+     
+
+    if response.status_code == 401:
+     raise RuntimeError("GitHub token is invalid or expired.")
+
+    if response.status_code == 403:
+     raise RuntimeError(
+        "GitHub denied branch creation. Check token permissions."
+    )
+
+    if response.status_code != 201:
+     raise RuntimeError(
+        f"Could not create branch: {response.status_code} {response.text}"
+    )
+
+
+
+    
+    return response.json()
+
+def apply_change(repo, path, new_content, sha, branch):
+
+
+    if branch == "main":
+        raise ValueError("Direct writes to main are not allowed.")
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
 
-    # Use the same authentication headers as your existing functions.
+  
     token = os.getenv("GITHUB_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json"
     }
 
-    # Fetch the current file so we can get its SHA.
+   
     response = requests.get(url, headers=headers)
 
     if response.status_code != 200:
@@ -143,16 +211,17 @@ def apply_change(repo, path, new_content, sha):
 
     
 
-    # GitHub expects the new file contents in Base64.
+    
     encoded_content = base64.b64encode(
         new_content.encode("utf-8")
     ).decode("utf-8")
 
-    # Tell GitHub what to write and which version to update.
+    # tell gitHub what to write and which version to update
     payload = {
         "message": f"Update {path} using AI agent",
         "content": encoded_content,
-        "sha": sha
+        "sha": sha,
+        "branch": branch
     }
 
     # PUT requests an update to the file on GitHub.
@@ -168,6 +237,10 @@ def apply_change(repo, path, new_content, sha):
 
 def write_file(repo, path, new_content):
 
+    if repo!= "yashmk420/agent-test-repo":
+
+        return "Error: only the configured test repo is allowed"
+    
     old_content, sha = get_file_data(repo, path)
 
 
@@ -189,13 +262,87 @@ def write_file(repo, path, new_content):
     # Pause and ask the human to approve.
     approval = input("Apply this change? Type yes or no: ")
 
-    if approval.strip().lower() == "yes":
-        result = apply_change(repo, path, new_content, sha)
-        return "Change applied successfully to GitHub."
 
-    # Any response other than yes rejects the change.
-    return "user rejected"
 
+    if approval.strip().lower() != "yes":
+        
+      return "user rejected"
+
+    branch = "agent/day19-readme-fix"
+
+    
+    try:
+     branch_result = create_branch(repo, branch)
+    except RuntimeError as error:
+     return f"Could not create branch: {error}"
+
+    if branch_result.get("already_exists"):
+     return (
+        f"Branch '{branch}' already exists. No file was changed. "
+        "Choose a new branch name and try again."
+    ) 
+
+    try:
+        apply_change(repo, path, new_content, sha, branch)
+    except RuntimeError as error:
+        return f"Could not apply change: {error}"
+
+    return {
+    "status": "success",
+    "branch": branch,
+    "path": path,
+    "diff": diff_text
+}
+
+
+
+def open_pull_request(repo, head_branch, base="main", title="", body=""):
+    url = f"https://api.github.com/repos/{repo}/pulls"
+
+    headers = {
+        "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    payload = {
+        "title": title,
+        "body": body,
+        "head": head_branch,
+        "base": base
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code == 201:
+        return response.json()
+
+
+    if response.status_code == 422:
+     error_data = response.json()
+     message = error_data.get("message", "")
+
+     if "No commits between" in response.text:
+        return {"error": "No changes between branches."}
+
+     if "A pull request already exists" in response.text:
+        return {"error": "A pull request already exists for these branches."}
+
+     raise RuntimeError(
+        f"GitHub rejected the pull request: {message}"
+    )
+
+    if response.status_code == 401:
+     raise RuntimeError("GitHub token is invalid or expired.")
+
+    if response.status_code == 403:
+     raise RuntimeError(
+        f"GitHub denied the request. {response.text}."
+    )
+
+
+    raise RuntimeError(
+        f"Could not open pull request: {response.status_code} {response.text}"
+    )
 
 
 
@@ -222,3 +369,11 @@ if __name__ == "__main__":
     "README.md",
      new_content
     )
+
+    result = create_branch(
+    "yashmk420/agent-test-repo",
+    "agent/day18-test"
+    )
+
+    print(result["ref"])
+    print(result["object"]["sha"])
