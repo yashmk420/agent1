@@ -6,6 +6,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+ALLOWED_REPOS = {
+    "yashmk420/agent-test-repo",
+}
+
+MAX_FILE_BYTES = 100_00
+
+PROTECTED_PATHS = {
+   ".env",
+   ".github/workflows",
+   "secrets"
+}
+
 def list_files(repo, path=""):
     token = os.getenv("GITHUB_TOKEN")
 
@@ -190,8 +203,9 @@ def create_branch(repo, new_branch, from_branch="main"):
 def apply_change(repo, path, new_content, sha, branch):
 
 
-    if branch == "main":
-        raise ValueError("Direct writes to main are not allowed.")
+    if not branch.startswith("agent/"):
+      raise ValueError("Blocked: writes are allowed only on agent/ branches.")
+    
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
 
   
@@ -237,9 +251,27 @@ def apply_change(repo, path, new_content, sha, branch):
 
 def write_file(repo, path, new_content):
 
-    if repo!= "yashmk420/agent-test-repo":
+    repo = repo.strip()
 
-        return "Error: only the configured test repo is allowed"
+    if repo not in ALLOWED_REPOS:
+       return f"Blocked: repository '{repo} is not allowlisted"
+    
+
+    path = path.strip().replace("\\", "/")
+    parts = path.split("/")
+
+    if(
+
+       path == ".env"
+       or path.startswith(".env.")
+       or ".github/workflows" == path
+       or path.startswith(".github/workflows")
+       or "secrets" in parts
+     ):
+       return f"Blocked: protected path '{path}'."
+
+    if len(new_content.encode("utf-8")) > MAX_FILE_BYTES:
+       return f"Blocked:file esceeds {MAX_FILE_BYTES} bytes"
     
     old_content, sha = get_file_data(repo, path)
 
@@ -268,7 +300,7 @@ def write_file(repo, path, new_content):
         
       return "user rejected"
 
-    branch = "agent/day19-readme-fix"
+    branch = "agent/day19-readme-f"
 
     
     try:

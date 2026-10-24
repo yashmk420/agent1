@@ -6,8 +6,16 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from github_files import list_files, read_file, write_file, open_pull_request
+import logging
 
+
+logging.basicConfig(
+    filename="agent.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 load_dotenv()
+
 
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
@@ -152,6 +160,9 @@ def ask_agent(question):
         }
     ]
 
+    successful_writes = 0
+    total_tool_calls = 0
+
     for step in range(6):
         response = client.chat.completions.create(
             model="openai/gpt-oss-20b",
@@ -173,19 +184,35 @@ def ask_agent(question):
             name = tool_call.function.name
             arguments = json.loads(tool_call.function.arguments)
 
+            logging.info(
+                "Tool requested: %s | Repo: %s | Path: %s",
+                name,
+                arguments.get("repo", "<missing>"),
+                arguments.get("path", "<missing>")
+            )
             print(f"\nTool requested: {name}")
             print(f"Arguments: {arguments}")
 
             try:
+                if total_tool_calls >=6:
+                    raise ValueError("Blocked: max of 6 tool calls per run")
+                total_tool_calls += 1
                 if name not in available_functions:
                     raise ValueError("Tool is not allowed")
 
+                if name == "write_file" and successful_writes >= 2:
+                    raise ValueError("Blocked: maximum of 2 successful file writes per run.")
+                
                 if arguments.get("repo") != REPO:
                     raise ValueError("Only the configured test repository is allowed")
 
                 
                 function = available_functions[name]
                 result = function(**arguments)
+
+                if name == "write_file" and isinstance(result, dict):
+                    if result.get("status") == "success":
+                        successful_writes += 1
 
                 if name == "write_file" and isinstance(result, dict):
                     if result.get("status") == "success":
@@ -221,6 +248,18 @@ def ask_agent(question):
             
             except Exception as error:
                 tool_output = f"Tool error: {error}"
+
+            if (
+                 tool_output.startswith("Tool error:")
+                 or tool_output.startswith("Blocked:")
+                 or tool_output.startswith("Error:")
+                 or tool_output == "user rejected"
+            ):
+                 logging.warning("Tool failed, rejected, or blocked: %s", name,
+                                 tool_output)
+            else:
+                 logging.info("Tool completed: %s", name)
+
 
             print(f"Tool result:\n{tool_output}")
 
